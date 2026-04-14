@@ -16,7 +16,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 	"time"
+
+	"github.com/beevik/etree"
 )
 
 var crandReader = crand.Reader
@@ -151,56 +155,61 @@ func (sp *SAMLSPConfig) verifyAndExtract(xmlBytes []byte) (string, error) {
 }
 
 func (sp *SAMLSPConfig) verifySignature(xmlBytes []byte) error {
-	// Find SignedInfo and compute its digest, then verify RSA signature
-	// We use a simplified approach: find DigestValue + SignatureValue in XML,
-	// recompute digest of the Assertion (without Signature), and verify.
-
-	type signatureInfo struct {
-		XMLName   xml.Name `xml:"Signature"`
-		SignedInfo struct {
-			Reference struct {
-				DigestValue string `xml:"DigestValue"`
-			} `xml:"Reference"`
-		} `xml:"SignedInfo"`
-		SignatureValue string `xml:"SignatureValue"`
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(xmlBytes); err != nil {
+		return fmt.Errorf("parse XML: %w", err)
 	}
 
-	type assertionWithSig struct {
-		XMLName   xml.Name      `xml:"Assertion"`
-		Signature signatureInfo `xml:"Signature"`
+	assertion := doc.FindElement("//Assertion")
+	if assertion == nil {
+		return fmt.Errorf("no Assertion found")
 	}
 
-	type responseWithAssertion struct {
-		XMLName   xml.Name         `xml:"Response"`
-		Assertion assertionWithSig `xml:"Assertion"`
+	signature := assertion.FindElement("./Signature")
+	if signature == nil {
+		return fmt.Errorf("no Signature found in Assertion")
 	}
 
-	var parsed responseWithAssertion
-	if err := xml.Unmarshal(xmlBytes, &parsed); err != nil {
-		return fmt.Errorf("parse for signature: %w", err)
+	signedInfo := signature.FindElement("./SignedInfo")
+	if signedInfo == nil {
+		return fmt.Errorf("no SignedInfo found")
 	}
 
-	sigValueB64 := parsed.Assertion.Signature.SignatureValue
-	if sigValueB64 == "" {
+	signatureValue := signature.FindElement("./SignatureValue")
+	if signatureValue == nil || strings.TrimSpace(signatureValue.Text()) == "" {
 		return fmt.Errorf("no SignatureValue found")
 	}
 
-	sigBytes, err := base64.StdEncoding.DecodeString(
-		trimWhitespace(sigValueB64),
-	)
+	digestValue := signature.FindElement("./SignedInfo/Reference/DigestValue")
+	if digestValue == nil || strings.TrimSpace(digestValue.Text()) == "" {
+		return fmt.Errorf("no DigestValue found")
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(trimWhitespace(signatureValue.Text()))
 	if err != nil {
 		return fmt.Errorf("decode SignatureValue: %w", err)
 	}
 
-	// Re-canonicalize SignedInfo and verify
-	// For MVP, we verify the RSA signature over the SignedInfo canonical form
-	// by re-serializing it from the raw XML.
-	signedInfoXML := extractSignedInfo(xmlBytes)
-	if signedInfoXML == nil {
-		return fmt.Errorf("cannot extract SignedInfo")
+	assertionCopy := assertion.Copy()
+	if sigCopy := assertionCopy.FindElement("./Signature"); sigCopy != nil {
+		assertionCopy.RemoveChild(sigCopy)
+	}
+	assertionC14N, err := canonicalize(assertionCopy)
+	if err != nil {
+		return fmt.Errorf("canonicalize Assertion: %w", err)
+	}
+	assertionDigest := sha256.Sum256([]byte(assertionC14N))
+	expectedDigest := base64.StdEncoding.EncodeToString(assertionDigest[:])
+	if trimWhitespace(digestValue.Text()) != expectedDigest {
+		return fmt.Errorf("digest mismatch")
 	}
 
-	hash := sha256.Sum256(signedInfoXML)
+	signedInfoC14N, err := canonicalize(signedInfo)
+	if err != nil {
+		return fmt.Errorf("canonicalize SignedInfo: %w", err)
+	}
+	hash := sha256.Sum256([]byte(signedInfoC14N))
+
 	pubKey, ok := sp.idpCert.PublicKey.(*rsa.PublicKey)
 	if !ok {
 		return fmt.Errorf("IdP certificate does not contain RSA key")
@@ -213,38 +222,6 @@ func (sp *SAMLSPConfig) verifySignature(xmlBytes []byte) error {
 	return nil
 }
 
-// extractSignedInfo finds the raw <ds:SignedInfo>...</ds:SignedInfo> bytes
-// from the XML document for signature verification.
-func extractSignedInfo(xmlBytes []byte) []byte {
-	s := string(xmlBytes)
-
-	// Look for SignedInfo with various namespace prefixes
-	for _, prefix := range []string{"ds:", "dsig:", ""} {
-		startTag := "<" + prefix + "SignedInfo"
-		endTag := "</" + prefix + "SignedInfo>"
-
-		startIdx := indexOf(s, startTag)
-		if startIdx == -1 {
-			continue
-		}
-		endIdx := indexOf(s[startIdx:], endTag)
-		if endIdx == -1 {
-			continue
-		}
-		return []byte(s[startIdx : startIdx+endIdx+len(endTag)])
-	}
-	return nil
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
 func trimWhitespace(s string) string {
 	var buf bytes.Buffer
 	for _, c := range s {
@@ -253,6 +230,199 @@ func trimWhitespace(s string) string {
 		}
 	}
 	return buf.String()
+}
+
+func canonicalize(el *etree.Element) (string, error) {
+	var buf strings.Builder
+	if err := c14nElement(&buf, el, nil); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+type nsEntry struct {
+	Prefix string
+	URI    string
+}
+
+func c14nElement(buf *strings.Builder, el *etree.Element, parentNS []nsEntry) error {
+	visibleNS := collectVisibleNS(el, parentNS)
+
+	buf.WriteByte('<')
+	if el.Space != "" {
+		buf.WriteString(el.Space)
+		buf.WriteByte(':')
+	}
+	buf.WriteString(el.Tag)
+
+	sort.Slice(visibleNS, func(i, j int) bool {
+		return visibleNS[i].Prefix < visibleNS[j].Prefix
+	})
+	for _, ns := range visibleNS {
+		buf.WriteByte(' ')
+		if ns.Prefix == "" {
+			buf.WriteString("xmlns=\"")
+		} else {
+			buf.WriteString("xmlns:")
+			buf.WriteString(ns.Prefix)
+			buf.WriteString("=\"")
+		}
+		buf.WriteString(ns.URI)
+		buf.WriteByte('"')
+	}
+
+	attrs := make([]etree.Attr, len(el.Attr))
+	copy(attrs, el.Attr)
+	sort.Slice(attrs, func(i, j int) bool {
+		if attrs[i].Space == "xmlns" || attrs[i].Key == "xmlns" {
+			return false
+		}
+		if attrs[j].Space == "xmlns" || attrs[j].Key == "xmlns" {
+			return false
+		}
+		if attrs[i].Space != attrs[j].Space {
+			return attrs[i].Space < attrs[j].Space
+		}
+		return attrs[i].Key < attrs[j].Key
+	})
+	for _, attr := range attrs {
+		if attr.Space == "xmlns" || attr.Key == "xmlns" {
+			continue
+		}
+		buf.WriteByte(' ')
+		if attr.Space != "" {
+			buf.WriteString(attr.Space)
+			buf.WriteByte(':')
+		}
+		buf.WriteString(attr.Key)
+		buf.WriteString("=\"")
+		buf.WriteString(escapeAttrValue(attr.Value))
+		buf.WriteByte('"')
+	}
+
+	buf.WriteByte('>')
+
+	mergedNS := mergeNS(parentNS, visibleNS)
+	for _, tok := range el.Child {
+		switch t := tok.(type) {
+		case *etree.Element:
+			if err := c14nElement(buf, t, mergedNS); err != nil {
+				return err
+			}
+		case *etree.CharData:
+			buf.WriteString(escapeText(t.Data))
+		}
+	}
+
+	buf.WriteString("</")
+	if el.Space != "" {
+		buf.WriteString(el.Space)
+		buf.WriteByte(':')
+	}
+	buf.WriteString(el.Tag)
+	buf.WriteByte('>')
+
+	return nil
+}
+
+func collectVisibleNS(el *etree.Element, parentNS []nsEntry) []nsEntry {
+	needed := make(map[string]string)
+
+	if el.Space != "" {
+		if uri := findNSURI(el, el.Space); uri != "" {
+			needed[el.Space] = uri
+		}
+	} else {
+		if uri := findDefaultNSURI(el); uri != "" {
+			needed[""] = uri
+		}
+	}
+
+	for _, attr := range el.Attr {
+		if attr.Space == "xmlns" || attr.Key == "xmlns" {
+			continue
+		}
+		if attr.Space != "" {
+			if uri := findNSURI(el, attr.Space); uri != "" {
+				needed[attr.Space] = uri
+			}
+		}
+	}
+
+	var result []nsEntry
+	for prefix, uri := range needed {
+		alreadyDeclared := false
+		for _, pns := range parentNS {
+			if pns.Prefix == prefix && pns.URI == uri {
+				alreadyDeclared = true
+				break
+			}
+		}
+		if !alreadyDeclared {
+			result = append(result, nsEntry{Prefix: prefix, URI: uri})
+		}
+	}
+
+	return result
+}
+
+func findNSURI(el *etree.Element, prefix string) string {
+	for cur := el; cur != nil; cur = cur.Parent() {
+		for _, attr := range cur.Attr {
+			if attr.Space == "xmlns" && attr.Key == prefix {
+				return attr.Value
+			}
+		}
+	}
+	return ""
+}
+
+func findDefaultNSURI(el *etree.Element) string {
+	for cur := el; cur != nil; cur = cur.Parent() {
+		for _, attr := range cur.Attr {
+			if attr.Key == "xmlns" && attr.Space == "" {
+				return attr.Value
+			}
+		}
+	}
+	return ""
+}
+
+func mergeNS(parent []nsEntry, added []nsEntry) []nsEntry {
+	merged := make([]nsEntry, len(parent))
+	copy(merged, parent)
+	for _, a := range added {
+		found := false
+		for i, m := range merged {
+			if m.Prefix == a.Prefix {
+				merged[i].URI = a.URI
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, a)
+		}
+	}
+	return merged
+}
+
+func escapeAttrValue(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "\t", "&#x9;")
+	s = strings.ReplaceAll(s, "\n", "&#xA;")
+	s = strings.ReplaceAll(s, "\r", "&#xD;")
+	return s
+}
+
+func escapeText(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\r", "&#xD;")
+	return s
 }
 
 // XML structures for parsing SAML Response
