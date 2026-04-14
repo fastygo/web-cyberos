@@ -2,5 +2,6 @@
 .project
 .cursorignore
 .env
+certs/*.crt
 *.exe
 tmp/

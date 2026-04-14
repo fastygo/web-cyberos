@@ -24,9 +24,9 @@ This repository contains a small **Go HTTP server** that serves a public site an
 |----------|-------------|---------|
 | `SITE_SESSION_KEY` or `SESSION_KEY` | HMAC secret for website session cookies | development placeholder |
 | `LISTEN_ADDR` | HTTP listen address | `:80` |
-| `SP_ENTITY_ID` | SAML SP Entity ID (often the site origin) | `https://sp.example.com` |
-| `SP_ACS_URL` | Assertion Consumer Service URL | `https://sp.example.com/saml/acs` |
-| `IDP_SSO_URL` | IdP single sign-on URL | `https://idp.example.com/sso` |
+| `SP_ENTITY_ID` | SAML SP Entity ID (often the site origin) | `https://cybeross.ru` |
+| `SP_ACS_URL` | Assertion Consumer Service URL | `https://cybeross.ru/saml/acs` |
+| `IDP_SSO_URL` | IdP single sign-on URL | `https://idp.cybeross.ru/sso` |
 | `IDP_CERT_PATH` | Filesystem path to IdP **public** certificate (PEM) | `idp_cert.pem` |
 
 `SITE_SESSION_KEY` is the name used in `.env.example`; if `SESSION_KEY` is set, it takes precedence.
@@ -81,7 +81,7 @@ Open `http://localhost/` (adjust `LISTEN_ADDR` if port 80 is not available).
    docker compose up -d
    ```
 
-The site listens on **port 80** (see `docker-compose.yml`). Adjust host port mapping if needed.
+The site is published on **127.0.0.1:8081** and listens on container port `80` (see `docker-compose.yml`).
 
 ---
 
