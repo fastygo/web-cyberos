@@ -1,0 +1,6 @@
+.manual
+.project
+.cursorignore
+.env
+*.exe
+tmp/

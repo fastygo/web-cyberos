@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Example site</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #0f1117;
+            color: #e1e4e8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            text-align: center;
+            max-width: 600px;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: #f0f6fc;
+        }
+        p {
+            font-size: 1.1rem;
+            color: #8b949e;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 2rem;
+            background: #238636;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #2ea043; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Example site</h1>
+        <p>Demo SAML Service Provider. Sign in to access the dashboard.</p>
+        <a href="/dashboard" class="btn">Sign In &rarr;</a>
+    </div>
+</body>
+</html>

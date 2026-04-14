@@ -1,0 +1,19 @@
+# SAML Service Provider site — self-contained.
+# Place the IdP public certificate as certs/idp.crt (copy from IdP volume or export).
+services:
+  website:
+    build: .
+    ports:
+      - "80:80"
+    env_file:
+      - .env
+    environment:
+      SITE_SESSION_KEY: ${SITE_SESSION_KEY}
+      SP_ENTITY_ID: ${SP_ENTITY_ID:-https://sp.example.com}
+      SP_ACS_URL: ${SP_ACS_URL:-https://sp.example.com/saml/acs}
+      IDP_SSO_URL: ${IDP_SSO_URL:-https://idp.example.com/sso}
+      IDP_CERT_PATH: /app/certs/idp.crt
+      LISTEN_ADDR: ":80"
+    volumes:
+      - ./certs:/app/certs:ro
+    restart: unless-stopped
