@@ -36,7 +36,7 @@ func main() {
 	// Protected routes (require SSO session)
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /dashboard", handlers.handleDashboard)
-	mux.Handle("/dashboard", authMiddleware(sp, sessionKey, protected))
+	mux.Handle("GET /dashboard", authMiddleware(sp, sessionKey, protected))
 
 	log.Printf("Website starting on %s", listenAddr)
 	log.Printf("SP Entity ID: %s", sp.EntityID)
