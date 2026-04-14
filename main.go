@@ -28,7 +28,10 @@ func main() {
 
 	// Public routes
 	mux.HandleFunc("GET /", handlers.handleHome)
-	mux.HandleFunc("GET /logout", handlers.handleLogout)
+	mux.HandleFunc("GET /logout", func(w http.ResponseWriter, r *http.Request) {
+		clearSiteSession(w)
+		http.Redirect(w, r, sp.LogoutURL(sp.EntityID), http.StatusFound)
+	})
 
 	// SAML ACS endpoint (receives POST from IdP)
 	mux.HandleFunc("POST /saml/acs", sp.HandleACS(sessionKey))

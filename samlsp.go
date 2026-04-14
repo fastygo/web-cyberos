@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -31,6 +32,18 @@ type SAMLSPConfig struct {
 	IDPCertPath string
 	ACSUrl      string
 	idpCert     *x509.Certificate
+}
+
+func (sp *SAMLSPConfig) LogoutURL(returnTo string) string {
+	base := strings.TrimRight(sp.IDPSSOURL, "/")
+	if strings.HasSuffix(base, "/sso") {
+		base = strings.TrimSuffix(base, "/sso")
+	}
+	logoutURL := base + "/logout"
+	if returnTo == "" {
+		return logoutURL
+	}
+	return logoutURL + "?return_to=" + url.QueryEscape(returnTo)
 }
 
 func (sp *SAMLSPConfig) LoadCert() error {
@@ -427,9 +440,9 @@ func escapeText(s string) string {
 
 // XML structures for parsing SAML Response
 type samlResponse struct {
-	XMLName   xml.Name       `xml:"Response"`
-	Status    samlStatus     `xml:"Status"`
-	Assertion samlAssertion  `xml:"Assertion"`
+	XMLName   xml.Name      `xml:"Response"`
+	Status    samlStatus    `xml:"Status"`
+	Assertion samlAssertion `xml:"Assertion"`
 }
 
 type samlStatus struct {
@@ -454,8 +467,8 @@ type samlAttributeStatement struct {
 }
 
 type samlAttribute struct {
-	Name   string           `xml:"Name,attr"`
-	Values []samlAttrValue  `xml:"AttributeValue"`
+	Name   string          `xml:"Name,attr"`
+	Values []samlAttrValue `xml:"AttributeValue"`
 }
 
 type samlAttrValue struct {

@@ -53,6 +53,18 @@ func getSiteSession(r *http.Request, sessionKey string) *SiteSession {
 	return &sess
 }
 
+func clearSiteSession(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     siteSessionCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 func siteSignedEncode(data any, key string) string {
 	payload, _ := json.Marshal(data)
 	b64 := base64.RawURLEncoding.EncodeToString(payload)
