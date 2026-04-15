@@ -4,4 +4,6 @@
 .env
 certs/*.crt
 *.exe
+*.log
 tmp/
+.paas/
